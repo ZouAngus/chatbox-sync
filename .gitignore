@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+server/chatbox_sync.db
+server/backups/
+server/uvicorn.log
+*.log
+.env
+.downloads/
+*.tmp
