@@ -8,3 +8,4 @@ server/uvicorn.log
 .env
 .downloads/
 *.tmp
+.env_token

@@ -2,19 +2,39 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
 import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "chatbox_sync.db"
 BACKUP_DIR = BASE_DIR / "backups"
 
-app = FastAPI(title="chatbox-sync", version="0.2.0")
+# Auth token — set via CHATBOX_SYNC_TOKEN env var or .env file
+_token_file = BASE_DIR / ".env_token"
+AUTH_TOKEN: str | None = os.environ.get("CHATBOX_SYNC_TOKEN") or (
+    _token_file.read_text().strip() if _token_file.exists() else None
+)
+
+app = FastAPI(title="chatbox-sync", version="0.3.0")
+
+
+def verify_token(request: Request) -> None:
+    """Dependency: reject requests without a valid Bearer token (when token is configured)."""
+    if not AUTH_TOKEN:
+        return  # no token configured → open access
+    auth = request.headers.get("Authorization", "")
+    if auth == f"Bearer {AUTH_TOKEN}":
+        return
+    # Also accept ?token= query param for simple curl/browser usage
+    if request.query_params.get("token") == AUTH_TOKEN:
+        return
+    raise HTTPException(status_code=401, detail="unauthorized")
 
 
 def db() -> sqlite3.Connection:
@@ -90,7 +110,7 @@ def health() -> dict[str, Any]:
     return {"ok": True, "db": str(DB_PATH), "backup_dir": str(BACKUP_DIR)}
 
 
-@app.post("/devices/register")
+@app.post("/devices/register", dependencies=[Depends(verify_token)])
 def register_device(payload: DeviceRegister) -> dict[str, Any]:
     now = int(time.time() * 1000)
     with db() as conn:
@@ -107,7 +127,7 @@ def register_device(payload: DeviceRegister) -> dict[str, Any]:
     return {"ok": True, "device_id": payload.device_id}
 
 
-@app.post("/backups/upload")
+@app.post("/backups/upload", dependencies=[Depends(verify_token)])
 async def upload_backup(
     file: UploadFile = File(...),
     device_id: str = Form(...),
@@ -182,7 +202,7 @@ async def upload_backup(
     }
 
 
-@app.get("/backups/latest")
+@app.get("/backups/latest", dependencies=[Depends(verify_token)])
 def latest_backup() -> dict[str, Any]:
     with db() as conn:
         row = conn.execute(
@@ -193,7 +213,7 @@ def latest_backup() -> dict[str, Any]:
     return dict(row)
 
 
-@app.get("/backups/history")
+@app.get("/backups/history", dependencies=[Depends(verify_token)])
 def backup_history(limit: int = 20) -> dict[str, Any]:
     limit = max(1, min(limit, 200))
     with db() as conn:
@@ -204,7 +224,7 @@ def backup_history(limit: int = 20) -> dict[str, Any]:
     return {"items": [dict(r) for r in rows]}
 
 
-@app.get("/backups/download/latest")
+@app.get("/backups/download/latest", dependencies=[Depends(verify_token)])
 def download_latest_backup() -> dict[str, Any]:
     with db() as conn:
         row = conn.execute(
